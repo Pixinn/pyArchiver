@@ -10,7 +10,7 @@ It is suitable to be used with cold storage providers only accepting one-way inc
 
 Backuping and archiving do not serve the same purpose:
 
-* A backup is intended to provide a *quick* mean of recovering data that is in current or recent used.
+* A backup is intended to provide a *quick* mean of recovering data that is currently in use or was recently used.
 * An archive is intended to store *final* set of data for a very long period of time. Typically, archives contain data that are not actively modified.
 
 Backups and archives are, of course, not mutually exclusive.
@@ -28,7 +28,7 @@ Backups and archives are, of course, not mutually exclusive.
 * Versionning **is not** supported
   * It is designed to restore your archives as a whole data-set, faithfull to its latest state
 * Deleted files will remain in the archive and will be restored
-    * But why would you remove files from your previous trove of archives?
+    * But why would you remove files from your precious trove of archives?
 
 # Get the binaries
 
@@ -36,7 +36,6 @@ Pre-built binary packages are available to download for these platforms:
 
     * [Windows](https://pub.xtof.info/pyArchiver/pyArchiver_win.zip)
     * [Macos](https://pub.xtof.info/pyArchiver/pyArchiver_macos.zip)
-    * [Debian (Ubuntu, etc)](https://pub.xtof.info/pyArchiver/pyArchiver_debian.zip)
 
 If you prefer using the python script, read the instruction at the end of this file.
 
