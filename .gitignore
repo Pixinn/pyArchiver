@@ -1,0 +1,12 @@
+**/.DS_Store
+.vscode/
+.vs/
+__pycache__/
+*.tar
+*.json
+*.exe
+*.ini
+*.archive
+scan_folder
+compare_folders
+
