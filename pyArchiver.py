@@ -18,6 +18,7 @@
 
 import sys
 import os
+import codecs
 import platform
 import argparse
 import json
@@ -234,6 +235,7 @@ class Storage:
             self.__connection.commit()
         except sqlite3.Error as e:
             Error_Fatal(e.args[0])
+            
 
 
     # Retreve the list a files that are stiil to be archived
@@ -521,7 +523,7 @@ class Application():
     def __ParseIniConfig(self, ini):
         config = configparser.ConfigParser()
         if os.path.isfile(ini):
-            config.read(ini)
+            config.read_file(codecs.open(ini, "r", "utf8"))
         else:
             config.read_string(ini)
 
