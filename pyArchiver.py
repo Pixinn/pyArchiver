@@ -680,8 +680,8 @@ class Application():
                         "size": int(source[JSON_KEY_FILES][file][JSON_KEY_SIZE]
                     )})
         # exluding files matching the exclude regexp
-        regexp_exlusion = config["exclude"]
-        if not len(regexp_exlusion) == 0:
+        regexp_exclusion = config["exclude"]
+        if not len(regexp_exclusion) == 0:
             regexp = re.compile(config["exclude"])
             files_to_exclude = []
             for file in files_to_archive:
@@ -692,6 +692,7 @@ class Application():
         # saving the files to archive into the database
         self.__storage.setListFiles(files_to_archive)
         nb_files_to_archive = len(files_to_archive)
+        print("{} files excluded.".format(len(files_to_exclude)))
         
         # Builds and sends the archives
         cipher = config["cipher"]
