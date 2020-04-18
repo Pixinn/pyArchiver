@@ -417,6 +417,8 @@ class RetrieverLocal():
 Class implementing an SFTP connexion
 '''
 class ConnectionSftp():
+    isOpened = False
+
     '''
     @param config "host", "user", "password", "dir"
     '''
@@ -427,14 +429,16 @@ class ConnectionSftp():
             self.__transport.connect(username = self.config["user"], password = self.config["password"])
             self.__sftp = paramiko.SFTPClient.from_transport(self.__transport)
         except Exception as e:
-            Error_Fatal(e.args)
+            Error_Fatal("Connection SFTP, " + e.args[0])
+        self.isOpened = True
 
     def getSftp(self):
         return self.__sftp
 
     def __del__(self):
-        self.__sftp.close()
-        self.__transport.close()
+        if self.isOpened:
+            self.__sftp.close()
+            self.__transport.close()
 
 
 '''
@@ -680,10 +684,10 @@ class Application():
                         "size": int(source[JSON_KEY_FILES][file][JSON_KEY_SIZE]
                     )})
         # exluding files matching the exclude regexp
+        files_to_exclude = []
         regexp_exclusion = config["exclude"]
         if not len(regexp_exclusion) == 0:
-            regexp = re.compile(config["exclude"])
-            files_to_exclude = []
+            regexp = re.compile(config["exclude"])            
             for file in files_to_archive:
                 if not regexp.search(file["path"]) is None:
                     files_to_exclude.append(file)
