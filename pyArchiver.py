@@ -133,27 +133,27 @@ class Storage:
         self.__connection.close()
 
     # Sets the sender's type
-    def setSender(self, sender):
-        sender.dbInit(self.__connection)
+    # def setSender(self, sender):
+    #     sender.dbInit(self.__connection)
 
     # Sets the cipher's type
     def setCypher(self, cipher):
         cipher.dbInit(self.__connection)
 
     # Returns the concrete "fetcher", that will fetch the archive files
-    def getFetcher(self):
-        try:
-            cmd = self.__connection .cursor()
-            cmd.execute('SELECT type from sender LIMIT 0,1')
-            type_sender = cmd.fetchone()[0]
-            if type_sender == "local":
-                cmd.execute('SELECT dir_out from sender LIMIT 0,1')
-                out_dir = cmd.fetchone()[0]
-                return RetrieverLocal(out_dir)
-            else:
-                 Error_Fatal("Sender type unknown")
-        except sqlite3.Error as e:
-            Error_Fatal(e.args[0])
+    # def getFetcher(self):
+    #     try:
+    #         cmd = self.__connection .cursor()
+    #         cmd.execute('SELECT type from sender LIMIT 0,1')
+    #         type_sender = cmd.fetchone()[0]
+    #         if type_sender == "local":
+    #             cmd.execute('SELECT dir_out from sender LIMIT 0,1')
+    #             out_dir = cmd.fetchone()[0]
+    #             return RetrieverLocal(out_dir)
+    #         else:
+    #              Error_Fatal("Sender type unknown")
+    #     except sqlite3.Error as e:
+    #         Error_Fatal(e.args[0])
 
     # Returns the concrete "cipher", that will fetch the archive files
     def getDeCypher(self):
@@ -211,7 +211,7 @@ class Storage:
 
 
     # Sets the config
-    def setConfig(self, file_config):
+    def setConfigFromFile(self, file_config):
         with open(file_config, 'r') as config:
             config = config.read()
             self.__connection.execute('INSERT INTO config VALUES(?)', [config])
@@ -381,16 +381,16 @@ class SenderLocal():
             return 1
 
     # Inits the provided db with relevant info
-    def dbInit(self, connection):
-        cmd = connection .cursor()
-        cmd.execute(''' CREATE TABLE IF NOT EXISTS sender
-            (type TEXT, dir_out TEXT)''')
-        cmd.execute('SELECT type from sender LIMIT 0,1')
-        type_sender = cmd.fetchone()
-        if type_sender is None:
-            cmd.execute('''INSERT INTO sender VALUES(?,?)''', ['local', self.dir_out])
-        connection .commit()
-        return NO_ERROR
+    # def dbInit(self, connection):
+    #     cmd = connection .cursor()
+    #     cmd.execute(''' CREATE TABLE IF NOT EXISTS sender
+    #         (type TEXT, dir_out TEXT)''')
+    #     cmd.execute('SELECT type from sender LIMIT 0,1')
+    #     type_sender = cmd.fetchone()
+    #     if type_sender is None:
+    #         cmd.execute('''INSERT INTO sender VALUES(?,?)''', ['local', self.dir_out])
+    #     connection .commit()
+    #     return NO_ERROR
 
 '''
 Callable class implementing the retrieving interface (archive, dir_output),
@@ -471,18 +471,18 @@ class SenderSftp():
             return 1
 
     # Inits the provided db with relevant info
-    def dbInit(self, connection):
-        cmd = connection .cursor()
-        cmd.execute(''' CREATE TABLE IF NOT EXISTS sender
-            (type TEXT, host TEXT, port INT, user TEXT, password TEXT, dir TEXT)''')
-        cmd.execute('SELECT type from sender LIMIT 0,1')
-        type_sender = cmd.fetchone()
-        config = self.__connection.config
-        if type_sender is None:
-            cmd.execute('''INSERT INTO sender VALUES(?,?,?,?,?,?)''',
-            ['sftp', config["host"], config["port"], config["user"], config["password"], self.__dir])
-        connection .commit()
-        return NO_ERROR
+    # def dbInit(self, connection):
+    #     cmd = connection .cursor()
+    #     cmd.execute(''' CREATE TABLE IF NOT EXISTS sender
+    #         (type TEXT, host TEXT, port INT, user TEXT, password TEXT, dir TEXT)''')
+    #     cmd.execute('SELECT type from sender LIMIT 0,1')
+    #     type_sender = cmd.fetchone()
+    #     config = self.__connection.config
+    #     if type_sender is None:
+    #         cmd.execute('''INSERT INTO sender VALUES(?,?,?,?,?,?)''',
+    #         ['sftp', config["host"], config["port"], config["user"], config["password"], self.__dir])
+    #     connection .commit()
+    #     return NO_ERROR
 
 
 
@@ -849,7 +849,7 @@ dir=
         
         # Initiate configuration
         self.__storage = Storage("{}.archive".format(config["name"]))
-        self.__storage.setConfig(args.ini)
+        self.__storage.setConfigFromFile(args.ini)
         self.__storage.setState(json_new_state)
 
         # Archive the files
