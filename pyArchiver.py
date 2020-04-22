@@ -25,12 +25,13 @@ import json
 import configparser
 import tempfile
 import tarfile
-import shutil
+#import shutil
 import binascii
-import random
-from io import BytesIO
-from time import localtime, strftime
+#import random
 import re
+from io import BytesIO
+from io import StringIO
+from time import localtime, strftime
 
 # package: pycryptodome
 from Crypto.Cipher import AES
@@ -40,6 +41,7 @@ from Crypto.Random import get_random_bytes
 
 # package: paramiko (ssh & sftp)
 import paramiko
+import socket
     # only to hide a paramiko warning
 import cryptography
 import warnings
@@ -70,7 +72,7 @@ NO_ERROR = 0
 Errors = []
 
 # Fatal Error
-def Error_Fatal(msg):
+def Error_Fatal(msg): 
     print("Error: " + msg)
     sys.exit(-1)
 
@@ -132,28 +134,9 @@ class Storage:
         self.__connection.commit()
         self.__connection.close()
 
-    # Sets the sender's type
-    # def setSender(self, sender):
-    #     sender.dbInit(self.__connection)
-
     # Sets the cipher's type
     def setCypher(self, cipher):
         cipher.dbInit(self.__connection)
-
-    # Returns the concrete "fetcher", that will fetch the archive files
-    # def getFetcher(self):
-    #     try:
-    #         cmd = self.__connection .cursor()
-    #         cmd.execute('SELECT type from sender LIMIT 0,1')
-    #         type_sender = cmd.fetchone()[0]
-    #         if type_sender == "local":
-    #             cmd.execute('SELECT dir_out from sender LIMIT 0,1')
-    #             out_dir = cmd.fetchone()[0]
-    #             return RetrieverLocal(out_dir)
-    #         else:
-    #              Error_Fatal("Sender type unknown")
-    #     except sqlite3.Error as e:
-    #         Error_Fatal(e.args[0])
 
     # Returns the concrete "cipher", that will fetch the archive files
     def getDeCypher(self):
@@ -210,10 +193,17 @@ class Storage:
             Error_Fatal(e.args[0])
 
 
-    # Sets the config
+    # Sets the config from a file
     def setConfigFromFile(self, file_config):
         with open(file_config, 'r') as config:
             config = config.read()
+            self.__connection.execute('INSERT INTO config VALUES(?)', [config])
+            self.__connection.commit()
+
+    # Sets the config from a string
+    def setConfigFromStr(self, config):
+            self.__connection.execute('DROP TABLE config')
+            self.__connection.execute('CREATE TABLE config (ini TEXT UNIQUE)')
             self.__connection.execute('INSERT INTO config VALUES(?)', [config])
             self.__connection.commit()
 
@@ -424,12 +414,14 @@ class ConnectionSftp():
     '''
     def __init__(self, config):
         self.config = config
-        self.__transport = paramiko.Transport((self.config["host"], self.config["port"]))      
         try:
+            self.__transport = paramiko.Transport((self.config["host"], self.config["port"]))
             self.__transport.connect(username = self.config["user"], password = self.config["password"])
             self.__sftp = paramiko.SFTPClient.from_transport(self.__transport)
+        except socket.gaierror as e:
+            Error_Fatal("Connection SFTP " + e.args[1] + ' host: {}, port: {}'.format(self.config["host"], self.config["port"]))
         except Exception as e:
-            Error_Fatal("Connection SFTP, " + e.args[0])
+            Error_Fatal("Connection SFTP " + str(e.args[0]))
         self.isOpened = True
 
     def getSftp(self):
@@ -511,7 +503,7 @@ class RetrieverSftp():
                 buffer.flush()
                 archive = buffer.getvalue()
         except OSError as e:
-            Error("{}\n{}\n".format(e.strerror, e.filename))
+            Error("Error: Cannot retrieve {}. errno: {}".format(src, e.errno))
             return archive, 1
         return archive, NO_ERROR
 
@@ -701,7 +693,6 @@ class Application():
         # Builds and sends the archives
         cipher = config["cipher"]
         send = config["sender"]
-        self.__storage.setSender(send)
         self.__storage.setCypher(cipher)
         date_time = strftime("%Y%m%d-%H%M%S", localtime())
         size_max = 1024*1024*int(config["size_tar"])
@@ -739,6 +730,7 @@ The possible commands are:
     resume      Resumes an archiving process.
     restore     Restores an archive.
     decipher    Deciphers archive files in a given folder.
+    modify      Modifies some parameters of the archive.
     about       Prints info about this program.
 ''')
         parser.add_argument("command", help="subcommand to run")
@@ -824,7 +816,7 @@ dir=
         # Parse the options
         parser = argparse.ArgumentParser(
             description="Starts a new archive.")
-        parser.add_argument("ini", help="Configuration of the archive")
+        parser.add_argument("ini", help="Configuration of the archive.")
         parser.add_argument("--dry-run", dest="dry", action='store_true', default=False, help="Test mode. The archives will be produced in memory but won't be sent to the repository.")
         args = parser.parse_args(os.sys.argv[2:])
 
@@ -869,7 +861,7 @@ dir=
         ### Parse the options
         parser = argparse.ArgumentParser(
             description="Resumes an archive.")
-        parser.add_argument("archive", help="File describing the archive.")
+        parser.add_argument("archive", help="Archive configuration file.")
         parser.add_argument("--dry-run", dest="dry", action='store_true', default=False, help="Test mode. The archives will be produced in memory but won't be sent to the repository.")
         args = parser.parse_args(os.sys.argv[2:])
 
@@ -911,7 +903,7 @@ dir=
         ### Parse the options
         parser = argparse.ArgumentParser(
             description="Restores an archive.")
-        parser.add_argument("archive", help="File describing the archive.")
+        parser.add_argument("archive", help="Archive configuration file.")
         parser.add_argument("destination", help="Directory where the files will be restored.")
         args = parser.parse_args(os.sys.argv[2:])
 
@@ -974,10 +966,47 @@ dir=
             self.__Untar(tar, args.destination)
 
 
+    '''
+    Executes the modify command.
+    args.option:
+        field new_value
+    '''
+    def modify(self):
+        ### Parse the options
+        parser = argparse.ArgumentParser(
+            description="Modify parameters in the archive configuration")
+        parser.add_argument("archive", help="Archive configuration file.")
+        parser.add_argument("field", help="""Configuration field to modify.
+Possible fields:
+  * sftp_host : address of the sftp server""")
+        parser.add_argument("value", help="New value.")
+        args = parser.parse_args(os.sys.argv[2:])
+
+        ### Sanity
+        if not os.path.isfile(args.archive):
+            Error_Fatal(args.archive + " does not exists.")
+        
+        field_is_ok = False
+        self.__storage = Storage(args.archive)
+        ini = self.__storage.getConfig()
+
+        if args.field == "sftp_host":
+            field_is_ok = True
+            config = configparser.ConfigParser()
+            config.read_string(ini)
+            if config['Repository']['type'] != "sftp":
+                Error_Fatal("The host is not a sftp server")
+            config["Sftp"]["host"] = args.value
+            new_ini = StringIO()
+            config.write(new_ini)
+            self.__storage.setConfigFromStr(new_ini.getvalue())
+        
+        if not field_is_ok:
+            Error_Fatal("Field " + args.field + " is not supported.")
 
 
     def about(self):
-        print('''Copyright (C) 2019 Christophe Meneboeuf <christophe@xtof.info>.
+        print('''Copyright (C) 2019-2020 Christophe Meneboeuf <christophe@xtof.info>.
         
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
