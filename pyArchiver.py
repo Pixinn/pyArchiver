@@ -624,6 +624,7 @@ class Application():
 
     # Creates a tar with the files
     def __Untar(self, buffer, destination):
+        destination = destination # hack to have the name defined in exception handlers :/
         if not os.path.isdir(destination):
             Error_Fatal("{} is not a valid directory.".format(destination))
 
@@ -631,12 +632,22 @@ class Application():
         bytes_tar = BytesIO(buffer)
         try:
             with tarfile.open(mode="r:*", fileobj=bytes_tar) as file_tar:
-                file_tar.extractall(destination)
+                for fil in file_tar:
+                    try:
+                        file_tar.extract(fil, destination)
+                    except OSError as e:
+                        if "denied" in e.strerror: # an older version on the file was read only
+                            print("Info: {} was read only.".format(os.path.join(destination, fil.name)))
+                        else:
+                            raise
+                        os.chmod(os.path.join(destination, fil.name), 0o666)
+                        file_tar.extract(fil, destination)
+                    finally:
+                        os.chmod(os.path.join(destination, fil.name), fil.mode)
         except tarfile.TarError as e:
             Error("{}. Corrupted file or bad password?".format(e.args[0]))
         except OSError as e:
             Error("{}\n{}\n".format(e.strerror, e.filename))
-
             
 
     # Archive the files identified from the diff
