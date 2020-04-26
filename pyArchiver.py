@@ -18,6 +18,7 @@
 
 import sys
 import os
+import time
 import codecs
 import platform
 import argparse
@@ -69,6 +70,8 @@ JSON_KEY_SIZE = "size"
 ### TOOLS
 
 NO_ERROR = 0
+SSH_ERROR = 2
+
 Errors = []
 
 # Fatal Error
@@ -356,6 +359,9 @@ Callable class implementing the sending interface (archive_to_be_sent, file_exte
 saving the archive locally
 '''
 class SenderLocal():
+
+    nb_tries_left = 1
+
     def __init__(self, dir_output):
         self.dir_out = dir_output
     
@@ -367,20 +373,15 @@ class SenderLocal():
                 file_tar.write(archive)
                 return NO_ERROR
         except OSError as e:
-            Error("{}\n{}\n".format(e.strerror, e.filename))
+            self.nb_tries_left = self.nb_tries_left - 1
+            if self.nb_tries_left == 0:
+                Error("{}\n{}\n".format(e.strerror, e.filename))
+            else:
+                print("{}\n{}\n".format(e.strerror, e.filename))
             return 1
 
-    # Inits the provided db with relevant info
-    # def dbInit(self, connection):
-    #     cmd = connection .cursor()
-    #     cmd.execute(''' CREATE TABLE IF NOT EXISTS sender
-    #         (type TEXT, dir_out TEXT)''')
-    #     cmd.execute('SELECT type from sender LIMIT 0,1')
-    #     type_sender = cmd.fetchone()
-    #     if type_sender is None:
-    #         cmd.execute('''INSERT INTO sender VALUES(?,?)''', ['local', self.dir_out])
-    #     connection .commit()
-    #     return NO_ERROR
+    def reset(self):
+        self.nb_tries_left = 1
 
 '''
 Callable class implementing the retrieving interface (archive, dir_output),
@@ -438,6 +439,9 @@ Callable class implementing the sending interface (archive_to_be_sent, file_exte
 saving the archive to a SFTP server
 '''
 class SenderSftp():
+
+    nb_tries_left = 2
+
     '''
     @param config "host", "user", "password", "dir"
     '''
@@ -455,26 +459,30 @@ class SenderSftp():
         try:
             self.__sftp.putfo(BytesIO(archive), dest)
             return NO_ERROR
+        except paramiko.ssh_exception.SSHException as e:            
+            self.nb_tries_left = self.nb_tries_left - 1
+            if self.nb_tries_left == 0:
+                Error("SFTP error. {}\n{}".format(e.args[0], name_tar))
+            else:
+                print("SFTP error. {}\n{}".format(e.args[0], name_tar))
+            return 1
         except OSError as e:
-            Error("{}\n{}\n".format(e.strerror, e.filename))
+            self.nb_tries_left = self.nb_tries_left - 1
+            if self.nb_tries_left == 0:
+                Error("{}\n{}\n".format(e.strerror, e.filename))
+            else:
+                print("{}\n{}\n".format(e.strerror, e.filename))
             return 1
         except Exception as e:
-            Error(e.args)
+            self.nb_tries_left = self.nb_tries_left - 1
+            if self.nb_tries_left == 0:
+                Error(e.args)
+            else:
+                print(e.args)
             return 1
 
-    # Inits the provided db with relevant info
-    # def dbInit(self, connection):
-    #     cmd = connection .cursor()
-    #     cmd.execute(''' CREATE TABLE IF NOT EXISTS sender
-    #         (type TEXT, host TEXT, port INT, user TEXT, password TEXT, dir TEXT)''')
-    #     cmd.execute('SELECT type from sender LIMIT 0,1')
-    #     type_sender = cmd.fetchone()
-    #     config = self.__connection.config
-    #     if type_sender is None:
-    #         cmd.execute('''INSERT INTO sender VALUES(?,?,?,?,?,?)''',
-    #         ['sftp', config["host"], config["port"], config["user"], config["password"], self.__dir])
-    #     connection .commit()
-    #     return NO_ERROR
+    def reset(self):
+        self.nb_tries_left = 2
 
 
 
@@ -502,8 +510,11 @@ class RetrieverSftp():
                 self.__sftp.getfo(src, buffer)
                 buffer.flush()
                 archive = buffer.getvalue()
+        except paramiko.ssh_exception.SSHException as e:
+            Error("Error: Cannot retrieve {}. {}".format(name_tar, e.args[0]))
+            return archive, SSH_ERROR
         except OSError as e:
-            Error("Error: Cannot retrieve {}. errno: {}".format(src, e.errno))
+            Error("Error: Cannot retrieve {}. errno: {}".format(name_tar, e.errno))
             return archive, 1
         return archive, NO_ERROR
 
@@ -622,9 +633,9 @@ class Application():
             with tarfile.open(mode="r:*", fileobj=bytes_tar) as file_tar:
                 file_tar.extractall(destination)
         except tarfile.TarError as e:
-            Error_Fatal("{}. Corrupted file or bad password?".format(e.args[0]))
+            Error("{}. Corrupted file or bad password?".format(e.args[0]))
         except OSError as e:
-            Error_Fatal("{}\n{}\n".format(e.strerror, e.filename))
+            Error("{}\n{}\n".format(e.strerror, e.filename))
 
             
 
@@ -703,12 +714,20 @@ class Application():
             name_tar = "ARCHIVE_{}_".format(config["name"]) + date_time + "_{0:06d}.tar.gz".format(idx) + cipher.getExtension()
             archive = self.__Tar(name_tar, config['dir_to_archive'], tar)
             archive = cipher(archive)
-            if dry == False:            
-                if send(archive, name_tar) == NO_ERROR:
-                    self.__storage.removeFiles(tar)
-                    self.__storage.addTar(name_tar)
-                    nb_files_to_archive = nb_files_to_archive - len(tar)
-                    size_total += len(archive)
+            if dry == False:
+                success = False
+                send.reset()
+                while not success and send.nb_tries_left > 0:
+                    if send(archive, name_tar) == NO_ERROR:
+                        success = True
+                        self.__storage.removeFiles(tar)
+                        self.__storage.addTar(name_tar)
+                        nb_files_to_archive = nb_files_to_archive - len(tar)
+                        size_total += len(archive)
+                        break
+                    else:
+                        time.sleep(5)
+                        print("Retrying...")
             else:
                 print("Dry run: the archive is not sent.")
                 nb_files_to_archive = nb_files_to_archive - len(tar)
@@ -873,6 +892,13 @@ dir=
         self.__storage = Storage(args.archive)
         config = self.__ParseIniConfig(self.__storage.getConfig())
         dir_to_archive = config["dir_to_archive"]
+
+        ### Print resume message
+        print("""
+=== RESUME ===
+Archived dir: {}
+==============
+        """.format(dir_to_archive))
 
         ### Creation of an empty json file as "previous state"
         json = self.__storage.getState()
