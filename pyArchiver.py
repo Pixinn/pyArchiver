@@ -43,12 +43,15 @@ from Crypto.Random import get_random_bytes
 # package: paramiko (ssh & sftp)
 import paramiko
 import socket
-    # only to hide a paramiko warning
+# only to hide a paramiko warning
 import cryptography
 import warnings
 
 # SQL
 import sqlite3
+
+# hash
+import xxhash
 
 
 ### JSON KEYS
@@ -126,7 +129,7 @@ class Storage:
             cmd.execute(''' CREATE TABLE config
                             (ini TEXT UNIQUE)''')
             cmd.execute(''' CREATE TABLE files_to_archive
-                (path TEXT, size INTEGER)''')
+                (hash INTEGER PRIMARY KEY, path TEXT, size INTEGER)''')
             cmd.execute(''' CREATE TABLE tars
                 (path TEXT)''')
             self.__connection .commit()
@@ -221,17 +224,18 @@ class Storage:
             Error_Fatal(e.args[0])
 
     # Sets a list a files to be archived
-    def setListFiles(self, list_files):
+    def setListFiles(self, list_files):        
         try:
             for file in list_files:
-                self.__connection.execute('INSERT INTO files_to_archive VALUES(?,?)', [file["path"], file["size"]])
+                hash = xxhash.xxh64(file["path"]).intdigest() - 0x8000000000000000
+                self.__connection.execute('INSERT INTO files_to_archive VALUES(?,?,?) ON CONFLICT(hash) DO UPDATE SET size = ?', [hash, file["path"], file["size"], file["size"]])
             self.__connection.commit()
         except sqlite3.Error as e:
             Error_Fatal(e.args[0])
             
 
 
-    # Retreve the list a files that are stiil to be archived
+    # Retreve the list a files that are still to be archived
     def getListFiles(self):
         try:
             files_to_archive = []
@@ -240,8 +244,8 @@ class Storage:
             info_files = cmd.fetchall()
             for info in info_files:
                 files_to_archive.append({
-                    "path": info[0],
-                    "size": info[1]
+                    "path": info[1],
+                    "size": info[2]
                 })
             return files_to_archive
         except sqlite3.Error as e:
@@ -678,25 +682,34 @@ class Application():
             files_to_archive.remove(file)
             self.__storage.removeFiles([file["path"]])
         # adding the files resulting from the folder' state comparison
+        cpt_different = 0
         if JSON_KEY_DIFFERENT in diff:
             for file in diff[JSON_KEY_DIFFERENT]:
+                cpt_different += 1
                 files_to_archive.append({
                     "path": file,
                     "size": int(source[JSON_KEY_FILES][file][JSON_KEY_SIZE]
                 )})
-        if JSON_KEY_UNIQUE_LEFT in diff:
+            print("{} files modified.".format(cpt_different))
+        cpt_new = 0
+        if JSON_KEY_UNIQUE_LEFT in diff:            
             for file in diff[JSON_KEY_UNIQUE_LEFT]:
+                cpt_new += 1
                 files_to_archive.append({
                     "path": file,
                     "size": int(source[JSON_KEY_FILES][file][JSON_KEY_SIZE]
                 )})
+            print("{} new files.".format(cpt_new))
+        cpt_renamed = 0
         if JSON_KEY_RENAMED in diff: # if the file has been renamed, it has to be archived again with its new name
             for hash, paths in diff[JSON_KEY_RENAMED].items():
                 for file in paths[JSON_KEY_LEFT]:
+                    cpt_renamed += 1
                     files_to_archive.append({
                         "path": file,
                         "size": int(source[JSON_KEY_FILES][file][JSON_KEY_SIZE]
                     )})
+            print("{} files renamed.".format(cpt_renamed))
         # exluding files matching the exclude regexp
         files_to_exclude = []
         regexp_exclusion = config["exclude"]
@@ -710,7 +723,7 @@ class Application():
         # saving the files to archive into the database
         self.__storage.setListFiles(files_to_archive)
         nb_files_to_archive = len(files_to_archive)
-        print("{} files excluded.".format(len(files_to_exclude)))
+        print("{} new files excluded.".format(len(files_to_exclude)))
         
         # Builds and sends the archives
         cipher = config["cipher"]
