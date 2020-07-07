@@ -364,8 +364,6 @@ saving the archive locally
 '''
 class SenderLocal():
 
-    nb_tries_left = 1
-
     def __init__(self, dir_output):
         self.dir_out = dir_output
     
@@ -383,9 +381,6 @@ class SenderLocal():
             else:
                 print("{}\n{}\n".format(e.strerror, e.filename))
             return 1
-
-    def reset(self):
-        self.nb_tries_left = 1
 
 '''
 Callable class implementing the retrieving interface (archive, dir_output),
@@ -419,23 +414,21 @@ class ConnectionSftp():
     '''
     def __init__(self, config):
         self.config = config
-        try:
-            self.__transport = paramiko.Transport((self.config["host"], self.config["port"]))
-            self.__transport.connect(username = self.config["user"], password = self.config["password"])
-            self.__sftp = paramiko.SFTPClient.from_transport(self.__transport)
-        except socket.gaierror as e:
-            Error_Fatal("Connection SFTP " + e.args[1] + ' host: {}, port: {}'.format(self.config["host"], self.config["port"]))
-        except Exception as e:
-            Error_Fatal("Connection SFTP " + str(e.args[0]))
+        self.__transport = paramiko.Transport((self.config["host"], self.config["port"]))
+        self.__transport.connect(username = self.config["user"], password = self.config["password"])
+        self.__sftp = paramiko.SFTPClient.from_transport(self.__transport)
         self.isOpened = True
 
     def getSftp(self):
         return self.__sftp
 
-    def __del__(self):
+    def close(self):
         if self.isOpened:
             self.__sftp.close()
             self.__transport.close()
+
+    def __del__(self):
+        self.close()
 
 
 '''
@@ -444,7 +437,7 @@ saving the archive to a SFTP server
 '''
 class SenderSftp():
 
-    nb_tries_left = 2
+    nb_tries_left = 2    
 
     '''
     @param config "host", "user", "password", "dir"
@@ -452,42 +445,53 @@ class SenderSftp():
     def __init__(self, config):
         warnings.simplefilter("ignore", cryptography.utils.CryptographyDeprecationWarning)  # mismatch between paramiko and crypto2.5
                                                                                             # shall be OK in net paramiko release.
-        self.__connection = ConnectionSftp(config)
-        self.__sftp = self.__connection.getSftp()
+        self.__config = config
+        #self.__connection = ConnectionSftp(config)
+        #self.__sftp = self.__connection.getSftp()
         self.__dir = config['dir']
 
     def __call__(self, archive, name_tar):
-        config = self.__connection.config
+
         dest = self.__dir + "/" + name_tar # the separator is always /
-        print("Sending to {}:{} > {}".format(config["host"], config["port"], dest))
+        print("Sending to {}:{} > {}".format(self.__config["host"], self.__config["port"], dest))
+
         try:
-            self.__sftp.putfo(BytesIO(archive), dest)
-            return NO_ERROR
-        except paramiko.ssh_exception.SSHException as e:            
-            self.nb_tries_left = self.nb_tries_left - 1
-            if self.nb_tries_left == 0:
-                Error("SFTP error. {}\n{}".format(e.args[0], name_tar))
-            else:
-                print("SFTP error. {}\n{}".format(e.args[0], name_tar))
-            return 1
-        except OSError as e:
-            self.nb_tries_left = self.nb_tries_left - 1
-            if self.nb_tries_left == 0:
-                Error("{}\n{}\n".format(e.strerror, e.filename))
-            else:
-                print("{}\n{}\n".format(e.strerror, e.filename))
-            return 1
+            connection = ConnectionSftp(self.__config)
+            sftp = connection.getSftp()
+        except socket.gaierror as e:
+            Error("Connection SFTP " + e.args[1] + ' host: {}, port: {}'.format(self.__config["host"], self.__config["port"]))
+            return SSH_ERROR
         except Exception as e:
-            self.nb_tries_left = self.nb_tries_left - 1
-            if self.nb_tries_left == 0:
-                Error(e.args)
-            else:
-                print(e.args)
-            return 1
+            Error("Connection SFTP " + str(e.args[0]))
+            return SSH_ERROR
+       
+        while self.nb_tries_left > 1:
+            try:
+                sftp.putfo(BytesIO(archive), dest)
+                self.nb_tries_left = 2
+                return NO_ERROR
+            except paramiko.ssh_exception.SSHException as e:            
+                self.nb_tries_left = self.nb_tries_left - 1
+                if self.nb_tries_left == 0:
+                    Error("SFTP error. {}\n{}".format(e.args[0], name_tar))
+                else:
+                    print("SFTP error. {}\n{}".format(e.args[0], name_tar))                
+            except OSError as e:
+                self.nb_tries_left = self.nb_tries_left - 1
+                if self.nb_tries_left == 0:
+                    Error("{}\n{}\n".format(e.strerror, e.filename))
+                else:
+                    print("{}\n{}\n".format(e.strerror, e.filename))
+            except Exception as e:
+                self.nb_tries_left = self.nb_tries_left - 1
+                if self.nb_tries_left == 0:
+                    Error(e.args)
+                else:
+                    print(e.args)
+            time.sleep(5)
 
-    def reset(self):
         self.nb_tries_left = 2
-
+        return SSH_ERROR
 
 
 '''
@@ -740,18 +744,16 @@ class Application():
             archive = cipher(archive)
             if dry == False:
                 success = False
-                send.reset()
-                while not success and send.nb_tries_left > 0:
-                    if send(archive, name_tar) == NO_ERROR:
-                        success = True
-                        self.__storage.removeFiles(tar)
-                        self.__storage.addTar(name_tar)
-                        nb_files_to_archive = nb_files_to_archive - len(tar)
-                        size_total += len(archive)
-                        break
-                    else:
-                        time.sleep(5)
-                        print("Retrying...")
+                if send(archive, name_tar) == NO_ERROR:
+                    success = True
+                    self.__storage.removeFiles(tar)
+                    self.__storage.addTar(name_tar)
+                    nb_files_to_archive = nb_files_to_archive - len(tar)
+                    size_total += len(archive)
+                    print("{} sent".format(name_tar))
+                    print("{:.3} GiB sent".format(size_total / (1024*1024*1024)))                 
+                else:
+                    print("Could not send {}".format(name_tar))
             else:
                 print("Dry run: the archive is not sent.")
                 nb_files_to_archive = nb_files_to_archive - len(tar)
