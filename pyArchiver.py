@@ -122,7 +122,9 @@ class Storage:
     def __init__(self, file_db):
         if not os.path.isfile(file_db):
             self.__connection =  sqlite3.connect(file_db)
-            cmd = self.__connection .cursor()
+            cmd = self.__connection.cursor()
+            cmd.execute(''' CREATE TABLE version
+                            (version INTEGER)''')
             cmd.execute(''' CREATE TABLE json
                             (state_dir BLOB,
                             CONSTRAINT unique_state UNIQUE(state_dir))''')
@@ -132,13 +134,25 @@ class Storage:
                 (hash INTEGER PRIMARY KEY, path TEXT, size INTEGER)''')
             cmd.execute(''' CREATE TABLE tars
                 (path TEXT)''')
-            self.__connection .commit()
+            self.__connection.commit()
         else:
-            self.__connection =  sqlite3.connect(file_db)            
+            self.__connection = sqlite3.connect(file_db)            
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.__connection.commit()
         self.__connection.close()
+
+    def getVersion(self):
+        try:
+            cmd = self.__connection.cursor()
+            cmd.execute('''SELECT name FROM sqlite_master WHERE type='table' AND name='version';''')
+            version = cmd.fetchone()
+            if version == None:
+                return 1
+            else:
+                return version
+        except sqlite3.Error as e:
+            Error_Fatal(e.args[0])
 
     # Sets the cipher's type
     def setCypher(self, cipher):
@@ -534,6 +548,8 @@ This class has operations with the same names as the commands, allowing to use t
 '''
 class Application():
 
+    VERSION = -1     # current version of the archive file
+
     # Parses the config ini file and returns corresponding objects and properties
     def __ParseIniConfig(self, ini):
         config = configparser.ConfigParser()
@@ -914,8 +930,15 @@ dir=
         if not os.path.isfile(args.archive):
             Error_Fatal(args.archive + " does not exists.")
 
-        ### Getting the conf back
+        ### Opening the storage
         self.__storage = Storage(args.archive)
+        #### sanitize version
+        version = self.__storage.getVersion()
+        if version > self.VERSION:
+            Error_Fatal("This client is too old to open the file {}.\nPlease download the latest version: https://github.com/Pixinn/pyArchiver".format(args.archive))            
+        if version < self.VERSION:
+            print("Please update the archive file (v{}) to the current version (v{}).\npyArchiver update".format(version, self.VERSION))
+        #### rading the configuration
         config = self.__ParseIniConfig(self.__storage.getConfig())
         dir_to_archive = config["dir_to_archive"]
 
