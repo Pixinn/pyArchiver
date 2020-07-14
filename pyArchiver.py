@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # coding: utf8
 
-# Copyright (C) 2019 Christophe Meneboeuf <christophe@xtof.info>
+# Copyright (C) 2020 Christophe Meneboeuf <christophe@xtof.info>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -124,7 +124,7 @@ class Storage:
             self.__connection =  sqlite3.connect(file_db)
             cmd = self.__connection.cursor()
             cmd.execute(''' CREATE TABLE version
-                            (version INTEGER)''')
+                            (version INTEGER PRIMARY KEY)''')            
             cmd.execute(''' CREATE TABLE json
                             (state_dir BLOB,
                             CONSTRAINT unique_state UNIQUE(state_dir))''')
@@ -142,14 +142,34 @@ class Storage:
         self.__connection.commit()
         self.__connection.close()
 
+    def update(self, new_version):
+        curr_version = self.getVersion()
+        # 1 -> 2
+        if curr_version == 1:
+            cmd = self.__connection.cursor()
+            cmd.execute(''' CREATE TABLE version
+                            (version INTEGER PRIMARY KEY)''')             
+            self.setVersion(2)
+
+    def setVersion(self, version):
+        try:
+            cmd = self.__connection.cursor()
+            #cmd.execute('''INSERT INTO version VALUES(?)''', [version])
+            self.__connection.execute('INSERT INTO version VALUES(?) ON CONFLICT(version) DO UPDATE SET version = ?', [version, version])
+            self.__connection.commit()
+        except sqlite3.Error as e:
+            Error_Fatal(e.args[0])
+
     def getVersion(self):
         try:
             cmd = self.__connection.cursor()
             cmd.execute('''SELECT name FROM sqlite_master WHERE type='table' AND name='version';''')
-            version = cmd.fetchone()
-            if version == None:
+            table = cmd.fetchone()
+            if table == None:
                 return 1
             else:
+                cmd.execute('SELECT version from version LIMIT 0,1')
+                version = cmd.fetchone()[0]
                 return version
         except sqlite3.Error as e:
             Error_Fatal(e.args[0])
@@ -548,7 +568,7 @@ This class has operations with the same names as the commands, allowing to use t
 '''
 class Application():
 
-    VERSION = -1     # current version of the archive file
+    VERSION = 2     # current version of the archive file
 
     # Parses the config ini file and returns corresponding objects and properties
     def __ParseIniConfig(self, ini):
@@ -778,6 +798,20 @@ class Application():
         return size_total
 
 
+    def __SanitizeArchive(self, path, is_updating):
+        ### Sanity
+        if not os.path.isfile(path):
+            Error_Fatal(path + " does not exists.")
+        ### Opening the storage
+        self.__storage = Storage(path)
+        #### sanitize version
+        version = self.__storage.getVersion()
+        if version > self.VERSION:
+            Error_Fatal("This client is too old to open the file {}.\nPlease download the latest version: https://github.com/Pixinn/pyArchiver".format(path))            
+        if not is_updating and version < self.VERSION:
+            Error_Fatal("Please update the archive file (v{}) to the current version (v{}).\nrun: pyArchiver update".format(version, self.VERSION))
+
+
     def __init__(self):
 
         # parse the arguments
@@ -792,6 +826,7 @@ The possible commands are:
     restore     Restores an archive.
     decipher    Deciphers archive files in a given folder.
     modify      Modifies some parameters of the archive.
+    update      Updates the archive file to the current version.
     about       Prints info about this program.
 ''')
         parser.add_argument("command", help="subcommand to run")
@@ -812,6 +847,10 @@ The possible commands are:
             description="Initialise an empty .ini file to configure your archive.")
         parser.add_argument("ini", help="configuration file to be created.")
         args = parser.parse_args(os.sys.argv[2:])
+
+        ### Sanity
+        if os.path.isfile(args.ini):
+            Error_Fatal(args.ini + " already exists.")
 
         # Creating the ini file
         str_ini = """
@@ -902,6 +941,7 @@ dir=
         
         # Initiate configuration
         self.__storage = Storage("{}.archive".format(config["name"]))
+        self.__storage.setVersion(self.VERSION)
         self.__storage.setConfigFromFile(args.ini)
         self.__storage.setState(json_new_state)
 
@@ -927,18 +967,9 @@ dir=
         args = parser.parse_args(os.sys.argv[2:])
 
         ### Sanity
-        if not os.path.isfile(args.archive):
-            Error_Fatal(args.archive + " does not exists.")
+        self.__SanitizeArchive(args.archive, False)
 
-        ### Opening the storage
-        self.__storage = Storage(args.archive)
-        #### sanitize version
-        version = self.__storage.getVersion()
-        if version > self.VERSION:
-            Error_Fatal("This client is too old to open the file {}.\nPlease download the latest version: https://github.com/Pixinn/pyArchiver".format(args.archive))            
-        if version < self.VERSION:
-            print("Please update the archive file (v{}) to the current version (v{}).\npyArchiver update".format(version, self.VERSION))
-        #### rading the configuration
+        #### reading the configuration
         config = self.__ParseIniConfig(self.__storage.getConfig())
         dir_to_archive = config["dir_to_archive"]
 
@@ -983,8 +1014,7 @@ Archived dir: {}
         args = parser.parse_args(os.sys.argv[2:])
 
         ### Sanity
-        if not os.path.isfile(args.archive):
-            Error_Fatal(args.archive + " does not exists.")
+        self.__SanitizeArchive(args.archive, False)
         if not os.path.isdir(args.destination):
             Error_Fatal(args.destination + " does not exists.")
 
@@ -1058,8 +1088,7 @@ Possible fields:
         args = parser.parse_args(os.sys.argv[2:])
 
         ### Sanity
-        if not os.path.isfile(args.archive):
-            Error_Fatal(args.archive + " does not exists.")
+        self.__SanitizeArchive(args.archive, False)
         
         field_is_ok = False
         self.__storage = Storage(args.archive)
@@ -1079,6 +1108,28 @@ Possible fields:
         if not field_is_ok:
             Error_Fatal("Field " + args.field + " is not supported.")
 
+
+    '''
+    Executes the update command.
+    '''
+    def update(self):
+        ### Parse the options
+        parser = argparse.ArgumentParser(
+            description="UPdates the archive file to the current version.")
+        parser.add_argument("archive", help="Archive configuration file.")
+        args = parser.parse_args(os.sys.argv[2:])
+
+        ### Sanity
+        self.__SanitizeArchive(args.archive, True)          
+        self.__storage = Storage(args.archive)
+        version = self.__storage.getVersion()
+        if(version > self.VERSION):
+            Error_Fatal("This client is too old to open the file {}.\nPlease download the latest version: https://github.com/Pixinn/pyArchiver".format(args.archive))            
+        if(version == self.VERSION):
+            print("This archive is up to date.")
+            return 0
+
+        self.__storage.update(self.VERSION)
 
     def about(self):
         print('''Copyright (C) 2019-2020 Christophe Meneboeuf <christophe@xtof.info>.
