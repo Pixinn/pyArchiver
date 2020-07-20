@@ -28,7 +28,7 @@ import tempfile
 import tarfile
 #import shutil
 import binascii
-#import random
+import random
 import re
 from io import BytesIO
 from io import StringIO
@@ -147,14 +147,36 @@ class Storage:
         # 1 -> 2
         if curr_version == 1:
             cmd = self.__connection.cursor()
+            # add version table
             cmd.execute(''' CREATE TABLE version
-                            (version INTEGER PRIMARY KEY)''')             
+                            (version INTEGER PRIMARY KEY)''')      
+            self.__connection.commit()                                   
             self.setVersion(2)
+            # add the path hash column
+            # cannot append it to the existing table as it involves a primary key
+            cmd.execute('''ALTER TABLE files_to_archive RENAME TO files_to_archive_OLD''')
+            cmd.execute('''CREATE TABLE files_to_archive
+                (hash INTEGER PRIMARY KEY, path TEXT, size INTEGER)''')
+            cmd.execute('''INSERT INTO files_to_archive (path, size) SELECT path, size FROM files_to_archive_OLD''')
+            cmd.execute('''DROP TABLE files_to_archive_OLD''')
+            self.__connection.commit()
+            # compute and populate the path hashes
+            cmd.execute('''SELECT path from files_to_archive''')
+            paths = cmd.fetchall()
+            for path in paths:                
+                path = path[0]
+                #hash_path = xxhash.xxh64(path).intdigest() - 0x8000000000000000
+                hash_path = random.randint(-2000000000,2000000000)
+                cmd.execute('''UPDATE files_to_archive
+                            SET hash = ? 
+                            WHERE path = ?''', [hash_path, path])
+            self.__connection.commit()
+            # display
+            print("updated to version 2")
 
     def setVersion(self, version):
         try:
             cmd = self.__connection.cursor()
-            #cmd.execute('''INSERT INTO version VALUES(?)''', [version])
             self.__connection.execute('INSERT INTO version VALUES(?) ON CONFLICT(version) DO UPDATE SET version = ?', [version, version])
             self.__connection.commit()
         except sqlite3.Error as e:
@@ -261,8 +283,9 @@ class Storage:
     def setListFiles(self, list_files):        
         try:
             for file in list_files:
-                hash = xxhash.xxh64(file["path"]).intdigest() - 0x8000000000000000
-                self.__connection.execute('INSERT INTO files_to_archive VALUES(?,?,?) ON CONFLICT(hash) DO UPDATE SET size = ?', [hash, file["path"], file["size"], file["size"]])
+                # there can only be one file with a given path
+                hash_path = xxhash.xxh64(file["path"]).intdigest() - 0x8000000000000000
+                self.__connection.execute('INSERT INTO files_to_archive VALUES(?,?,?) ON CONFLICT(hash) DO UPDATE SET size = ?', [hash_path, file["path"], file["size"], file["size"]])
             self.__connection.commit()
         except sqlite3.Error as e:
             Error_Fatal(e.args[0])
