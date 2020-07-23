@@ -134,6 +134,8 @@ class Storage:
                 (hash INTEGER PRIMARY KEY, path TEXT, size INTEGER)''')
             cmd.execute(''' CREATE TABLE tars
                 (path TEXT)''')
+            cmd.execute(''' CREATE TABLE tars_to_fetch
+                (hash INTEGER PRIMARY KEY, path TEXT)''')
             self.__connection.commit()
         else:
             self.__connection = sqlite3.connect(file_db)            
@@ -149,7 +151,10 @@ class Storage:
             cmd = self.__connection.cursor()
             # add version table
             cmd.execute(''' CREATE TABLE version
-                            (version INTEGER PRIMARY KEY)''')      
+                            (version INTEGER PRIMARY KEY)''')
+            # add the table for the tars that could not be fetched
+            cmd.execute(''' CREATE TABLE tars_to_fetch
+                            (hash INTEGER PRIMARY KEY, path TEXT)''') 
             self.__connection.commit()                                   
             self.setVersion(2)
             # add the path hash column
@@ -316,6 +321,27 @@ class Storage:
             self.__connection.commit()
         except sqlite3.Error as e:
             Error_Fatal(e.args[0])
+
+    # Adds all the tars to be fetched
+    def addTarsToFetch(self, tars):
+        for tar in tars:
+            tar = tar[0]
+            hash = xxhash.xxh64(tar).intdigest() - 0x8000000000000000        
+            try:
+                self.__connection.execute('''INSERT INTO tars_to_fetch VALUES(?, ?) ON CONFLICT(hash) DO UPDATE SET path = ?''', [hash, tar, tar])
+                self.__connection.commit()
+            except sqlite3.Error as e:
+                Error_Fatal(e.args[0])
+
+
+    # Remove one tar from the list to be fetched
+    def removeToFetch(self, tar):  
+        try:
+            self.__connection.execute('''DELETE FROM tars_to_fetch WHERE path = ?''', [tar])
+            self.__connection.commit()
+        except sqlite3.Error as e:
+            Error_Fatal(e.args[0])
+
 
     def removeFiles(self, list_files):
         try:
@@ -503,8 +529,6 @@ class SenderSftp():
         warnings.simplefilter("ignore", cryptography.utils.CryptographyDeprecationWarning)  # mismatch between paramiko and crypto2.5
                                                                                             # shall be OK in net paramiko release.
         self.__config = config
-        #self.__connection = ConnectionSftp(config)
-        #self.__sftp = self.__connection.getSftp()
         self.__dir = config['dir']
 
     def __call__(self, archive, name_tar):
@@ -560,19 +584,19 @@ class RetrieverSftp():
     @param config "host", "user", "password", "dir"
     '''
     def __init__(self, config):
-        self.__connection = ConnectionSftp(config)
-        self.__sftp = self.__connection.getSftp()
+        self.__config = config
         self.__dir = config['dir']
 
 
     def __call__(self, name_tar):
-        config = self.__connection.config
         src = self.__dir + "/" + name_tar # the separator is always /
-        print("Fetching {} < {}:{}".format(src, config["host"], config["port"]))
+        print("Fetching {} < {}:{}".format(src, self.__config["host"], self.__config["port"]))
         try:
+            connection = ConnectionSftp(self.__config)
+            sftp = connection.getSftp()
             archive = b''
             with BytesIO() as buffer:
-                self.__sftp.getfo(src, buffer)
+                sftp.getfo(src, buffer)
                 buffer.flush()
                 archive = buffer.getvalue()
         except paramiko.ssh_exception.SSHException as e:
@@ -1048,6 +1072,7 @@ Archived dir: {}
         fetch = config["retriever"]
         decipher = config["decipher"]
         trove = self.__storage.getArchives()
+        self.__storage.addTarsToFetch(trove)
         print("{} tar files will be fetched and extracted.".format(len(trove)))
         for archive in trove:
             name_archive = archive[0]
@@ -1055,8 +1080,8 @@ Archived dir: {}
             if error == NO_ERROR:
                 tar = decipher(tar)
                 self.__Untar(tar, args.destination)
-
-    
+                self.__storage.removeToFetch(name_archive)
+                 
 
     '''
     Executes the decipher command.
