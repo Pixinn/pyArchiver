@@ -514,6 +514,12 @@ class ConnectionSftp():
         self.close()
 
 
+def WaitBeforeRetry():
+    WAIT = 30
+    print("Will retry in {} seconds".format(WAIT))
+    time.sleep(WAIT)
+
+
 '''
 Callable class implementing the sending interface (archive_to_be_sent, file_extension),
 saving the archive to a SFTP server
@@ -531,45 +537,49 @@ class SenderSftp():
         self.__config = config
         self.__dir = config['dir']
 
+
+    def __handleError(self, err_msg):
+        self.nb_tries_left = self.nb_tries_left - 1
+        if self.nb_tries_left >= 1:
+            print(err_msg)
+            WaitBeforeRetry()
+        else:
+            Error(err_msg)
+
+
     def __call__(self, archive, name_tar):
 
         dest = self.__dir + "/" + name_tar # the separator is always /
         print("Sending to {}:{} > {}".format(self.__config["host"], self.__config["port"], dest))
 
-        try:
-            connection = ConnectionSftp(self.__config)
-            sftp = connection.getSftp()
-        except socket.gaierror as e:
-            Error("Connection SFTP " + e.args[1] + ' host: {}, port: {}'.format(self.__config["host"], self.__config["port"]))
-            return SSH_ERROR
-        except Exception as e:
-            Error("Connection SFTP " + str(e.args[0]))
-            return SSH_ERROR
-       
-        while self.nb_tries_left > 1:
+        connected = False
+        while self.nb_tries_left >= 1:
+
             try:
-                sftp.putfo(BytesIO(archive), dest)
-                self.nb_tries_left = 2
-                return NO_ERROR
-            except paramiko.ssh_exception.SSHException as e:            
-                self.nb_tries_left = self.nb_tries_left - 1
-                if self.nb_tries_left == 0:
-                    Error("SFTP error. {}\n{}".format(e.args[0], name_tar))
-                else:
-                    print("SFTP error. {}\n{}".format(e.args[0], name_tar))                
-            except OSError as e:
-                self.nb_tries_left = self.nb_tries_left - 1
-                if self.nb_tries_left == 0:
-                    Error("{}\n{}\n".format(e.strerror, e.filename))
-                else:
-                    print("{}\n{}\n".format(e.strerror, e.filename))
+                connection = ConnectionSftp(self.__config)
+                sftp = connection.getSftp()
+                connected = True
+            except socket.gaierror as e:
+                err_msg = "Connection SFTP " + e.args[1] + ' host: {}, port: {}'.format(self.__config["host"], self.__config["port"])
+                self.__handleError(err_msg)
             except Exception as e:
-                self.nb_tries_left = self.nb_tries_left - 1
-                if self.nb_tries_left == 0:
-                    Error(e.args)
-                else:
-                    print(e.args)
-            time.sleep(5)
+                err_msg = "Connection SFTP " + str(e.args[0])
+                self.__handleError(err_msg)
+            
+            if connected:
+                try:
+                    sftp.putfo(BytesIO(archive), dest)
+                    self.nb_tries_left = 2
+                    return NO_ERROR
+                except paramiko.ssh_exception.SSHException as e:            
+                    err_msg = "SFTP error. {}\n{}".format(e.args[0], name_tar)
+                    self.__handleError(err_msg)
+                except OSError as e:
+                    err_msg = "{}\n{}\n".format(e.strerror, e.filename)
+                    self.__handleError(err_msg)
+                except Exception as e:
+                    err_msg = e.args
+                    self.__handleError(err_msg)            
 
         self.nb_tries_left = 2
         return SSH_ERROR
@@ -580,6 +590,9 @@ Callable class implementing the retrieving interface (archive, dir_output),
 restoring the archive from a sftp server
 '''
 class RetrieverSftp():
+
+    nb_tries_left = 2
+
     '''
     @param config "host", "user", "password", "dir"
     '''
@@ -588,24 +601,56 @@ class RetrieverSftp():
         self.__dir = config['dir']
 
 
+    def __handleError(self, err_msg):
+        self.nb_tries_left = self.nb_tries_left - 1
+        if self.nb_tries_left >= 1:
+            print(err_msg)
+            WaitBeforeRetry()
+        else:
+            Error(err_msg)
+
+
     def __call__(self, name_tar):
+        
         src = self.__dir + "/" + name_tar # the separator is always /
         print("Fetching {} < {}:{}".format(src, self.__config["host"], self.__config["port"]))
-        try:
-            connection = ConnectionSftp(self.__config)
-            sftp = connection.getSftp()
-            archive = b''
-            with BytesIO() as buffer:
-                sftp.getfo(src, buffer)
-                buffer.flush()
-                archive = buffer.getvalue()
-        except paramiko.ssh_exception.SSHException as e:
-            Error("Error: Cannot retrieve {}. {}".format(name_tar, e.args[0]))
+        
+        connected = False
+        success = False
+        while self.nb_tries_left >= 1 and success == False:
+
+            try:
+                connection = ConnectionSftp(self.__config)
+                sftp = connection.getSftp()
+                connected = True
+            except socket.gaierror as e:
+                err_msg = "Connection SFTP " + e.args[1] + ' host: {}, port: {}'.format(self.__config["host"], self.__config["port"])                
+                self.__handleError(err_msg)   
+            except Exception as e:
+                err_msg = "Connection SFTP " + str(e.args[0])
+                self.__handleError(err_msg)
+
+            if connected:
+                try:
+                    archive = b''
+                    with BytesIO() as buffer:
+                        sftp.getfo(src, buffer)
+                        buffer.flush()
+                        archive = buffer.getvalue()
+                        success = True
+                except paramiko.ssh_exception.SSHException as e:
+                    err_msg = "Error: Cannot retrieve {}. {}".format(name_tar, e.args[0])
+                    self.__handleError(err_msg)
+                except OSError as e:
+                    err_msg = "Error: Cannot retrieve {}. errno: {}".format(name_tar, e.errno)
+                    self.__handleError(err_msg)
+
+        self.nb_tries_left = 2
+
+        if success == True:
+            return archive, NO_ERROR
+        else:
             return archive, SSH_ERROR
-        except OSError as e:
-            Error("Error: Cannot retrieve {}. errno: {}".format(name_tar, e.errno))
-            return archive, 1
-        return archive, NO_ERROR
 
 
 
