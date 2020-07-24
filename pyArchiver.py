@@ -515,13 +515,13 @@ class ConnectionSftp():
 
 
 def WaitBeforeRetry():
-    WAIT = 30
+    WAIT = 5
     print("Will retry in {} seconds".format(WAIT))
     time.sleep(WAIT)
 
 
 '''
-Callable class implementing the sending interface (archive_to_be_sent, file_extension),
+Callable class implementing the send interface
 saving the archive to a SFTP server
 '''
 class SenderSftp():
@@ -584,6 +584,41 @@ class SenderSftp():
         self.nb_tries_left = 2
         return SSH_ERROR
 
+
+
+'''
+Callable class implementing the delete interfacE
+Deleting the archive from a SFTP server
+'''
+class DeleterSftp():
+
+    def __init__(self, config):
+        self.__config = config
+        self.__dir = config['dir']
+
+    
+    def __call__(self, tars_to_delete):
+        
+        try:
+            connection = ConnectionSftp(self.__config)
+            sftp = connection.getSftp()
+        except socket.gaierror as e:
+            Error_Fatal("Connection SFTP " + e.args[1] + ' host: {}, port: {}'.format(self.__config["host"], self.__config["port"]))
+        except Exception as e:
+            Error_Fatal("Connection SFTP " + str(e.args[0]))
+
+        for tar in tars_to_delete:
+            
+            tar = tar[0]
+            src = self.__dir + "/" + tar # the separator is always /
+            print("Deleting {} @ {}:{}".format(src, self.__config["host"], self.__config["port"]))
+
+            try:
+                sftp.remove(src)
+            except paramiko.ssh_exception.SSHException as e:
+                Error("Error: Cannot delete {}. {}".format(tar, e.args[0]))
+            except OSError as e:
+                Error("Error: Cannot delete {}. errno: {}".format(tar, e.errno))
 
 '''
 Callable class implementing the retrieving interface (archive, dir_output),
@@ -679,7 +714,7 @@ class Application():
             decipher = DecypherDummy()
         else:
             Error_Fatal("\'cipher\' must be \'yes\' or \'no\'. Check your ini file.")
-        # get sender
+        # get sender / retriever / deleter
         if config['Repository']['type'] == 'local':
             sender = SenderLocal(config['Local']['dir'])
             retriever = RetrieverLocal(config['Local']['dir'])
@@ -692,10 +727,12 @@ class Application():
             conf_sftp["dir"] = config["Sftp"]["dir"]
             sender = SenderSftp(conf_sftp)
             retriever = RetrieverSftp(conf_sftp)
+            deleter = DeleterSftp(conf_sftp)
         else:
             Error_Fatal("Sender {} is not supported. Check your ini file.".format(config['Cloud']['access_cloud']))
 
         return {
+            "deleter": deleter,
             "sender": sender,
             "retriever": retriever,
             "cipher": cipher,
@@ -918,6 +955,7 @@ The possible commands are:
     restore     Restores an archive.
     decipher    Deciphers archive files in a given folder.
     modify      Modifies some parameters of the archive.
+    delete      Deletes the archive on the distant server.
     update      Updates the archive file to the current version.
     about       Prints info about this program.
 ''')
@@ -1200,6 +1238,49 @@ Possible fields:
         
         if not field_is_ok:
             Error_Fatal("Field " + args.field + " is not supported.")
+
+
+
+    '''
+    Executes the delete command.
+    args.option:
+        archive_file
+    '''
+    def delete(self):
+
+        ### Parse the options
+        parser = argparse.ArgumentParser(
+            description="Deletes an archive on the distant server. USE WITH CAUTION!")
+        parser.add_argument("archive", help="Archive configuration file.")
+        args = parser.parse_args(os.sys.argv[2:])
+
+        ### Sanity
+        self.__SanitizeArchive(args.archive, False)
+
+        ### Confirm the DELETE command
+        print("""
+==============
+THIS COMMAND WILL DELETE THE ARCHIVE ON THE STORAGE LOCATION.
+IT CAN NOT BE REVERSED!
+==============
+        """)
+        confirmation = input("Enter the name of the archive file to confirm: ")
+        if(confirmation != args.archive):
+            print("This is not the name of the archive file (\"{}\")".format(args.archive))
+            return
+        
+        ### Delete the tars
+        self.__storage = Storage(args.archive)
+        ini = self.__storage.getConfig()
+        config = self.__ParseIniConfig(ini)
+        
+        trove = self.__storage.getArchives()        
+        delete = config["deleter"]
+        
+        delete(trove)
+
+        return
+
 
 
     '''
