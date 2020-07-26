@@ -38,12 +38,8 @@ Thus you have to get around twice the amount of RAM than the biggest (single) fi
 
 # Get the binaries
 
-Pre-built binary packages are available to download for these platforms:
-
-    * [Windows](https://pub.xtof.info/pyArchiver/pyArchiver_win.zip)
-    * [Macos](https://pub.xtof.info/pyArchiver/pyArchiver_macos.zip)
-
-If you prefer using the python script, read the instruction at the end of this file.
+Pre-built binary packages are available to download :
+https://github.com/Pixinn/pyArchiver/releases/
 
 # How to use pyArchiver
 
