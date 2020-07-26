@@ -448,7 +448,7 @@ saving the archive locally
 class SenderLocal():
 
     def __init__(self, dir_output):
-        self.dir_out = dir_output
+        self.dir_out = dir_output.replace("\"","")
     
     def __call__(self, archive, name_tar):
         fullpath = os.path.join(self.dir_out, name_tar)
@@ -458,11 +458,7 @@ class SenderLocal():
                 file_tar.write(archive)
                 return NO_ERROR
         except OSError as e:
-            self.nb_tries_left = self.nb_tries_left - 1
-            if self.nb_tries_left == 0:
-                Error("{}\n{}\n".format(e.strerror, e.filename))
-            else:
-                print("{}\n{}\n".format(e.strerror, e.filename))
+            Error("{}\n{}\n".format(e.strerror, e.filename))
             return 1
 
 '''
@@ -471,7 +467,7 @@ restoring the archive from a local directory
 '''
 class RetrieverLocal():
     def __init__(self, dir_input):
-        self.__dir_intput = dir_input
+        self.__dir_intput = dir_input.replace("\"","")
 
     def __call__(self, name_tar):
         print("Fetching {}".format(name_tar))
@@ -484,6 +480,30 @@ class RetrieverLocal():
             return archive, 1
         return archive, NO_ERROR
 
+
+'''
+Callable class implementing the delete interface
+Deleting the archive from a local directory
+'''
+class DeleterLocal():
+
+    def __init__(self, dir_input):
+        self.__dir_intput = dir_input.replace("\"","")
+    
+    def __call__(self, tars_to_delete):
+        
+        for tar in tars_to_delete:            
+            tar = tar[0]
+            fullpath = os.path.join(self.__dir_intput, tar)
+            print("Deleting {}".format(fullpath))
+
+            try:
+                os.remove(fullpath)
+            except OSError as e:
+                Error("Error: Cannot delete {}. errno: {}".format(tar, e.errno))
+
+        # remove the directory if now emptied
+        os.rmdir(self.__dir_intput)
 
 
 '''
@@ -515,7 +535,7 @@ class ConnectionSftp():
 
 
 def WaitBeforeRetry():
-    WAIT = 5
+    WAIT = 30
     print("Will retry in {} seconds".format(WAIT))
     time.sleep(WAIT)
 
@@ -587,7 +607,7 @@ class SenderSftp():
 
 
 '''
-Callable class implementing the delete interfacE
+Callable class implementing the delete interface
 Deleting the archive from a SFTP server
 '''
 class DeleterSftp():
@@ -718,6 +738,7 @@ class Application():
         if config['Repository']['type'] == 'local':
             sender = SenderLocal(config['Local']['dir'])
             retriever = RetrieverLocal(config['Local']['dir'])
+            deleter = DeleterLocal(config['Local']['dir'])
         elif config['Repository']['type'] == 'sftp':
             conf_sftp = dict()
             conf_sftp["host"] = config["Sftp"]["host"]
