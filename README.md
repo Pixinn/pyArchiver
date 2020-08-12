@@ -112,7 +112,7 @@ pyArchiver is written in Python. If you are more confortable calling the script 
     * pycryptodome>=3.7.3
     * configparser>=3.7.4
 
-    > pip3 install paramiko pycryptodome configparser
+    > pip3 install paramiko pycryptodome configparser xxhash
     
 You also need two programs: *scan_folder* and *compare_folder*. Here are links to download binaries for your platform of choice:
 
