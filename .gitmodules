@@ -1,0 +1,3 @@
+[submodule "libCompareFolders"]
+	path = libCompareFolders
+	url = https://github.com/Pixinn/libCompareFolders.git
